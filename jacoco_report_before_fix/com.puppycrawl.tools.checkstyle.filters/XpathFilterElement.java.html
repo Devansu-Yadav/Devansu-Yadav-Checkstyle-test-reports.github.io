@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>XpathFilterElement.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">checkstyle</a> &gt; <a href="index.source.html" class="el_package">com.puppycrawl.tools.checkstyle.filters</a> &gt; <span class="el_source">XpathFilterElement.java</span></div><h1>XpathFilterElement.java</h1><pre class="source lang-java linenums">////////////////////////////////////////////////////////////////////////////////
+// checkstyle: Checks Java source code for adherence to a set of rules.
+// Copyright (C) 2001-2021 the original author or authors.
+//
+// This library is free software; you can redistribute it and/or
+// modify it under the terms of the GNU Lesser General Public
+// License as published by the Free Software Foundation; either
+// version 2.1 of the License, or (at your option) any later version.
+//
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public
+// License along with this library; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+////////////////////////////////////////////////////////////////////////////////
+
+package com.puppycrawl.tools.checkstyle.filters;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import com.puppycrawl.tools.checkstyle.TreeWalkerAuditEvent;
+import com.puppycrawl.tools.checkstyle.TreeWalkerFilter;
+import com.puppycrawl.tools.checkstyle.utils.CommonUtil;
+import com.puppycrawl.tools.checkstyle.xpath.AbstractNode;
+import com.puppycrawl.tools.checkstyle.xpath.RootNode;
+import net.sf.saxon.Configuration;
+import net.sf.saxon.om.Item;
+import net.sf.saxon.sxpath.XPathDynamicContext;
+import net.sf.saxon.sxpath.XPathEvaluator;
+import net.sf.saxon.sxpath.XPathExpression;
+import net.sf.saxon.trans.XPathException;
+
+/**
+ * This filter element is immutable and processes {@link TreeWalkerAuditEvent}
+ * objects based on the criteria of file, check, module id, xpathQuery.
+ *
+ */
+public class XpathFilterElement implements TreeWalkerFilter {
+
+    /** The regexp to match file names against. */
+    private final Pattern fileRegexp;
+
+    /** The pattern for file names. */
+    private final String filePattern;
+
+    /** The regexp to match check names against. */
+    private final Pattern checkRegexp;
+
+    /** The pattern for check class names. */
+    private final String checkPattern;
+
+    /** The regexp to match message names against. */
+    private final Pattern messageRegexp;
+
+    /** The pattern for message names. */
+    private final String messagePattern;
+
+    /** Module id filter. */
+    private final String moduleId;
+
+    /** Xpath expression. */
+    private final XPathExpression xpathExpression;
+
+    /** Xpath query. */
+    private final String xpathQuery;
+
+    /**
+     * Creates a {@code XpathElement} instance.
+     *
+     * @param files regular expression for names of filtered files
+     * @param checks regular expression for filtered check classes
+     * @param message regular expression for messages.
+     * @param moduleId the module id
+     * @param query the xpath query
+     * @throws IllegalArgumentException if the xpath query is not expected.
+     */
+    public XpathFilterElement(String files, String checks,
+<span class="fc" id="L84">                       String message, String moduleId, String query) {</span>
+<span class="fc" id="L85">        filePattern = files;</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (files == null) {</span>
+<span class="fc" id="L87">            fileRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L90">            fileRegexp = Pattern.compile(files);</span>
+        }
+<span class="fc" id="L92">        checkPattern = checks;</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (checks == null) {</span>
+<span class="fc" id="L94">            checkRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L97">            checkRegexp = CommonUtil.createPattern(checks);</span>
+        }
+<span class="fc" id="L99">        messagePattern = message;</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (message == null) {</span>
+<span class="fc" id="L101">            messageRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L104">            messageRegexp = Pattern.compile(message);</span>
+        }
+<span class="fc" id="L106">        this.moduleId = moduleId;</span>
+<span class="fc" id="L107">        xpathQuery = query;</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        if (xpathQuery == null) {</span>
+<span class="fc" id="L109">            xpathExpression = null;</span>
+        }
+        else {
+<span class="fc" id="L112">            final XPathEvaluator xpathEvaluator = new XPathEvaluator(</span>
+<span class="fc" id="L113">                    Configuration.newConfiguration());</span>
+            try {
+<span class="fc" id="L115">                xpathExpression = xpathEvaluator.createExpression(xpathQuery);</span>
+            }
+<span class="fc" id="L117">            catch (XPathException ex) {</span>
+<span class="fc" id="L118">                throw new IllegalArgumentException(&quot;Unexpected xpath query: &quot; + xpathQuery, ex);</span>
+<span class="fc" id="L119">            }</span>
+        }
+<span class="fc" id="L121">    }</span>
+
+    /**
+     * Creates a {@code XpathElement} instance.
+     *
+     * @param files regular expression for names of filtered files
+     * @param checks regular expression for filtered check classes
+     * @param message regular expression for messages.
+     * @param moduleId the module id
+     * @param query the xpath query
+     * @throws IllegalArgumentException if the xpath query is not correct.
+     */
+    public XpathFilterElement(Pattern files, Pattern checks, Pattern message,
+<span class="fc" id="L134">                           String moduleId, String query) {</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (files == null) {</span>
+<span class="fc" id="L136">            filePattern = null;</span>
+<span class="fc" id="L137">            fileRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L140">            filePattern = files.pattern();</span>
+<span class="fc" id="L141">            fileRegexp = files;</span>
+        }
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        if (checks == null) {</span>
+<span class="fc" id="L144">            checkPattern = null;</span>
+<span class="fc" id="L145">            checkRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L148">            checkPattern = checks.pattern();</span>
+<span class="fc" id="L149">            checkRegexp = checks;</span>
+        }
+<span class="fc bfc" id="L151" title="All 2 branches covered.">        if (message == null) {</span>
+<span class="fc" id="L152">            messagePattern = null;</span>
+<span class="fc" id="L153">            messageRegexp = null;</span>
+        }
+        else {
+<span class="fc" id="L156">            messagePattern = message.pattern();</span>
+<span class="fc" id="L157">            messageRegexp = message;</span>
+        }
+<span class="fc" id="L159">        this.moduleId = moduleId;</span>
+<span class="fc" id="L160">        xpathQuery = query;</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (xpathQuery == null) {</span>
+<span class="fc" id="L162">            xpathExpression = null;</span>
+        }
+        else {
+<span class="fc" id="L165">            final XPathEvaluator xpathEvaluator = new XPathEvaluator(</span>
+<span class="fc" id="L166">                    Configuration.newConfiguration());</span>
+            try {
+<span class="fc" id="L168">                xpathExpression = xpathEvaluator.createExpression(xpathQuery);</span>
+            }
+<span class="fc" id="L170">            catch (XPathException ex) {</span>
+<span class="fc" id="L171">                throw new IllegalArgumentException(&quot;Incorrect xpath query: &quot; + xpathQuery, ex);</span>
+<span class="fc" id="L172">            }</span>
+        }
+<span class="fc" id="L174">    }</span>
+
+    @Override
+    public boolean accept(TreeWalkerAuditEvent event) {
+<span class="fc bfc" id="L178" title="All 2 branches covered.">        return !isFileNameAndModuleAndModuleNameMatching(event)</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">                || !isMessageNameMatching(event)</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">                || !isXpathQueryMatching(event);</span>
+    }
+
+    /**
+     * Is matching by file name, module id and Check name.
+     *
+     * @param event event
+     * @return true if it is matching
+     */
+    private boolean isFileNameAndModuleAndModuleNameMatching(TreeWalkerAuditEvent event) {
+<span class="fc bfc" id="L190" title="All 4 branches covered.">        return event.getFileName() != null</span>
+<span class="fc bfc" id="L191" title="All 2 branches covered.">                &amp;&amp; (fileRegexp == null || fileRegexp.matcher(event.getFileName()).find())</span>
+<span class="fc bfc" id="L192" title="All 4 branches covered.">                &amp;&amp; event.getViolation() != null</span>
+<span class="fc bfc" id="L193" title="All 4 branches covered.">                &amp;&amp; (moduleId == null || moduleId.equals(event.getModuleId()))</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">                &amp;&amp; (checkRegexp == null || checkRegexp.matcher(event.getSourceName()).find());</span>
+    }
+
+    /**
+     * Is matching by message.
+     *
+     * @param event event
+     * @return true if it is matching or not set.
+     */
+    private boolean isMessageNameMatching(TreeWalkerAuditEvent event) {
+<span class="fc bfc" id="L204" title="All 4 branches covered.">        return messageRegexp == null || messageRegexp.matcher(event.getMessage()).find();</span>
+    }
+
+    /**
+     * Is matching by xpath query.
+     *
+     * @param event event
+     * @return true if it is matching or not set.
+     */
+    private boolean isXpathQueryMatching(TreeWalkerAuditEvent event) {
+        boolean isMatching;
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (xpathExpression == null) {</span>
+<span class="fc" id="L216">            isMatching = true;</span>
+        }
+        else {
+<span class="fc" id="L219">            isMatching = false;</span>
+<span class="fc" id="L220">            final List&lt;AbstractNode&gt; nodes = getItems(event)</span>
+<span class="fc" id="L221">                    .stream().map(AbstractNode.class::cast).collect(Collectors.toList());</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            for (AbstractNode abstractNode : nodes) {</span>
+<span class="fc bfc" id="L223" title="All 2 branches covered.">                isMatching = abstractNode.getTokenType() == event.getTokenType()</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">                        &amp;&amp; abstractNode.getLineNumber() == event.getLine()</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">                        &amp;&amp; abstractNode.getColumnNumber() == event.getColumnCharIndex();</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">                if (isMatching) {</span>
+<span class="fc" id="L227">                    break;</span>
+                }
+<span class="fc" id="L229">            }</span>
+        }
+<span class="fc" id="L231">        return isMatching;</span>
+    }
+
+    /**
+     * Returns list of nodes matching xpath expression given event.
+     *
+     * @param event {@code TreeWalkerAuditEvent} object
+     * @return list of nodes matching xpath expression given event
+     * @throws IllegalStateException if the xpath query could not be evaluated.
+     */
+    private List&lt;Item&gt; getItems(TreeWalkerAuditEvent event) {
+        final RootNode rootNode;
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (event.getRootAst() == null) {</span>
+<span class="fc" id="L244">            rootNode = null;</span>
+        }
+        else {
+<span class="fc" id="L247">            rootNode = new RootNode(event.getRootAst());</span>
+        }
+        final List&lt;Item&gt; items;
+        try {
+<span class="fc" id="L251">            final XPathDynamicContext xpathDynamicContext =</span>
+<span class="fc" id="L252">                    xpathExpression.createDynamicContext(rootNode);</span>
+<span class="fc" id="L253">            items = xpathExpression.evaluate(xpathDynamicContext);</span>
+        }
+<span class="fc" id="L255">        catch (XPathException ex) {</span>
+<span class="fc" id="L256">            throw new IllegalStateException(&quot;Cannot initialize context and evaluate query: &quot;</span>
+                    + xpathQuery, ex);
+<span class="fc" id="L258">        }</span>
+<span class="fc" id="L259">        return items;</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L264">        return Objects.hash(filePattern, checkPattern, messagePattern, moduleId, xpathQuery);</span>
+    }
+
+    @Override
+    public boolean equals(Object other) {
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (this == other) {</span>
+<span class="fc" id="L270">            return true;</span>
+        }
+<span class="fc bfc" id="L272" title="All 4 branches covered.">        if (other == null || getClass() != other.getClass()) {</span>
+<span class="fc" id="L273">            return false;</span>
+        }
+<span class="fc" id="L275">        final XpathFilterElement xpathFilter = (XpathFilterElement) other;</span>
+<span class="fc bfc" id="L276" title="All 2 branches covered.">        return Objects.equals(filePattern, xpathFilter.filePattern)</span>
+<span class="fc bfc" id="L277" title="All 2 branches covered.">                &amp;&amp; Objects.equals(checkPattern, xpathFilter.checkPattern)</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">                &amp;&amp; Objects.equals(messagePattern, xpathFilter.messagePattern)</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">                &amp;&amp; Objects.equals(moduleId, xpathFilter.moduleId)</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">                &amp;&amp; Objects.equals(xpathQuery, xpathFilter.xpathQuery);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

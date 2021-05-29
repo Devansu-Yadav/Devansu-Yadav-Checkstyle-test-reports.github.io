@@ -1,0 +1,679 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JavadocMetadataScraper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">checkstyle</a> &gt; <a href="index.source.html" class="el_package">com.puppycrawl.tools.checkstyle.meta</a> &gt; <span class="el_source">JavadocMetadataScraper.java</span></div><h1>JavadocMetadataScraper.java</h1><pre class="source lang-java linenums">////////////////////////////////////////////////////////////////////////////////
+// checkstyle: Checks Java source code for adherence to a set of rules.
+// Copyright (C) 2001-2021 the original author or authors.
+//
+// This library is free software; you can redistribute it and/or
+// modify it under the terms of the GNU Lesser General Public
+// License as published by the Free Software Foundation; either
+// version 2.1 of the License, or (at your option) any later version.
+//
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public
+// License along with this library; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+////////////////////////////////////////////////////////////////////////////////
+
+package com.puppycrawl.tools.checkstyle.meta;
+
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.TransformerException;
+
+import com.puppycrawl.tools.checkstyle.FileStatefulCheck;
+import com.puppycrawl.tools.checkstyle.api.DetailAST;
+import com.puppycrawl.tools.checkstyle.api.DetailNode;
+import com.puppycrawl.tools.checkstyle.api.JavadocTokenTypes;
+import com.puppycrawl.tools.checkstyle.api.TokenTypes;
+import com.puppycrawl.tools.checkstyle.checks.javadoc.AbstractJavadocCheck;
+import com.puppycrawl.tools.checkstyle.utils.TokenUtil;
+
+/**
+ * Class for scraping module metadata from the corresponding class' class-level javadoc.
+ */
+@FileStatefulCheck
+<span class="fc" id="L52">public class JavadocMetadataScraper extends AbstractJavadocCheck {</span>
+
+    /** Module details store used for testing. */
+<span class="fc" id="L55">    private static final Map&lt;String, ModuleDetails&gt; MODULE_DETAILS_STORE = new HashMap&lt;&gt;();</span>
+
+    /** Regular expression for property location in class-level javadocs. */
+<span class="fc" id="L58">    private static final Pattern PROPERTY_TAG = Pattern.compile(&quot;\\s*Property\\s*&quot;);</span>
+
+    /** Regular expression for property type location in class-level javadocs. */
+<span class="fc" id="L61">    private static final Pattern TYPE_TAG = Pattern.compile(&quot;^ Type is\\s.*&quot;);</span>
+
+    /** Regular expression for property validation type location in class-level javadocs. */
+<span class="fc" id="L64">    private static final Pattern VALIDATION_TYPE_TAG =</span>
+<span class="fc" id="L65">            Pattern.compile(&quot;\\s.*Validation type is\\s.*&quot;);</span>
+
+    /** Regular expression for property default value location in class-level javadocs. */
+<span class="fc" id="L68">    private static final Pattern DEFAULT_VALUE_TAG = Pattern.compile(&quot;^ Default value is:*.*&quot;);</span>
+
+    /** Regular expression for check example location in class-level javadocs. */
+<span class="fc" id="L71">    private static final Pattern EXAMPLES_TAG =</span>
+<span class="fc" id="L72">            Pattern.compile(&quot;\\s*To configure the (default )?check.*&quot;);</span>
+
+    /** Regular expression for module parent location in class-level javadocs. */
+<span class="fc" id="L75">    private static final Pattern PARENT_TAG = Pattern.compile(&quot;\\s*Parent is\\s*&quot;);</span>
+
+    /** Regular expression for module violation messages location in class-level javadocs. */
+<span class="fc" id="L78">    private static final Pattern VIOLATION_MESSAGES_TAG =</span>
+<span class="fc" id="L79">            Pattern.compile(&quot;\\s*Violation Message Keys:\\s*&quot;);</span>
+
+    /** Regular expression for detecting ANTLR tokens(for e.g. CLASS_DEF). */
+<span class="fc" id="L82">    private static final Pattern TOKEN_TEXT_PATTERN = Pattern.compile(&quot;([A-Z_]{2,})+&quot;);</span>
+
+    /** Regular expression for removal of @code{-} present at the beginning of texts. */
+<span class="fc" id="L85">    private static final Pattern DESC_CLEAN = Pattern.compile(&quot;-\\s&quot;);</span>
+
+    /** Regular expression for file separator corresponding to the host OS. */
+<span class="fc" id="L88">    private static final Pattern FILE_SEPARATOR_PATTERN =</span>
+<span class="fc" id="L89">            Pattern.compile(Pattern.quote(System.getProperty(&quot;file.separator&quot;)));</span>
+
+    /** Regular expression for quotes. */
+<span class="fc" id="L92">    private static final Pattern QUOTE_PATTERN = Pattern.compile(&quot;\&quot;&quot;);</span>
+
+    /** Java file extension. */
+    private static final String JAVA_FILE_EXTENSION = &quot;.java&quot;;
+
+    /**
+     * This set contains faulty property default value which should not be written to the XML
+     * metadata files.
+     */
+<span class="fc" id="L101">    private static final Set&lt;String&gt; PROPERTIES_TO_NOT_WRITE = Collections.unmodifiableSet(</span>
+<span class="fc" id="L102">            new HashSet&lt;&gt;(Arrays.asList(</span>
+                    &quot;null&quot;,
+                    &quot;the charset property of the parent &lt;a href=https://checkstyle.org/&quot;
+                        + &quot;config.html#Checker&gt;Checker&lt;/a&gt; module&quot;
+    )));
+
+    /**
+     * Format for exception message for missing type for check property.
+     */
+    private static final String PROP_TYPE_MISSING = &quot;Type for property '%s' is missing&quot;;
+
+    /**
+     * Format for exception message for missing default value for check property.
+     */
+    private static final String PROP_DEFAULT_VALUE_MISSING =
+        &quot;Default value for property '%s' is missing&quot;;
+
+    /** ModuleDetails instance for each module AST traversal. */
+    private ModuleDetails moduleDetails;
+
+    /**
+     * Boolean variable which lets us know whether violation message section is being scraped
+     * currently.
+     */
+    private boolean scrapingViolationMessageList;
+
+    /**
+     * Boolean variable which lets us know whether we should scan and scrape the current javadoc
+     * or not. Since we need only class level javadoc, it becomes true at its root and false after
+     * encountering {@code JavadocTokenTypes.SINCE_LITERAL}.
+     */
+    private boolean toScan;
+
+    /** DetailNode pointing to the root node of the class level javadoc of the class. */
+    private DetailNode rootNode;
+
+    /**
+     * Child number of the property section node, where parent is the class level javadoc root
+     * node.
+     */
+    private int propertySectionStartIdx;
+
+    /**
+     * Child number of the example section node, where parent is the class level javadoc root
+     * node.
+     */
+    private int exampleSectionStartIdx;
+
+    /**
+     * Child number of the parent section node, where parent is the class level javadoc root
+     * node.
+     */
+    private int parentSectionStartIdx;
+
+    @Override
+    public int[] getDefaultJavadocTokens() {
+<span class="fc" id="L158">        return new int[] {</span>
+            JavadocTokenTypes.JAVADOC,
+            JavadocTokenTypes.PARAGRAPH,
+            JavadocTokenTypes.LI,
+            JavadocTokenTypes.SINCE_LITERAL,
+        };
+    }
+
+    @Override
+    public int[] getRequiredJavadocTokens() {
+<span class="fc" id="L168">        return getAcceptableJavadocTokens();</span>
+    }
+
+    @Override
+    public void beginJavadocTree(DetailNode rootAst) {
+<span class="fc bfc" id="L173" title="All 2 branches covered.">        if (isTopLevelClassJavadoc()) {</span>
+<span class="fc" id="L174">            moduleDetails = new ModuleDetails();</span>
+<span class="fc" id="L175">            toScan = false;</span>
+<span class="fc" id="L176">            scrapingViolationMessageList = false;</span>
+<span class="fc" id="L177">            propertySectionStartIdx = -1;</span>
+<span class="fc" id="L178">            exampleSectionStartIdx = -1;</span>
+<span class="fc" id="L179">            parentSectionStartIdx = -1;</span>
+
+<span class="fc" id="L181">            final String filePath = getFileContents().getFileName();</span>
+<span class="fc" id="L182">            String moduleName = getModuleSimpleName();</span>
+<span class="fc" id="L183">            final String checkModuleExtension = &quot;Check&quot;;</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">            if (moduleName.contains(checkModuleExtension)) {</span>
+<span class="fc" id="L185">                moduleName = moduleName.substring(0, moduleName.indexOf(checkModuleExtension));</span>
+            }
+<span class="fc" id="L187">            moduleDetails.setName(moduleName);</span>
+<span class="fc" id="L188">            moduleDetails.setFullQualifiedName(getPackageName(filePath));</span>
+<span class="fc" id="L189">            moduleDetails.setModuleType(getModuleType());</span>
+        }
+<span class="fc" id="L191">    }</span>
+
+    @Override
+    public void visitJavadocToken(DetailNode ast) {
+<span class="fc bfc" id="L195" title="All 2 branches covered.">        if (toScan) {</span>
+<span class="fc" id="L196">            scrapeContent(ast);</span>
+        }
+
+<span class="fc bfc" id="L199" title="All 2 branches covered.">        if (ast.getType() == JavadocTokenTypes.JAVADOC) {</span>
+<span class="fc" id="L200">            final DetailAST parent = getParent(getBlockCommentAst());</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">            if (parent.getType() == TokenTypes.CLASS_DEF) {</span>
+<span class="fc" id="L202">                rootNode = ast;</span>
+<span class="fc" id="L203">                toScan = true;</span>
+            }
+<span class="fc" id="L205">        }</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        else if (ast.getType() == JavadocTokenTypes.SINCE_LITERAL) {</span>
+<span class="fc" id="L207">            toScan = false;</span>
+        }
+<span class="fc" id="L209">    }</span>
+
+    @Override
+    public void finishJavadocTree(DetailNode rootAst) {
+<span class="fc" id="L213">        moduleDetails.setDescription(getDescriptionText());</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (isTopLevelClassJavadoc()) {</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">            if (getFileContents().getFileName().contains(&quot;test&quot;)) {</span>
+<span class="fc" id="L216">                MODULE_DETAILS_STORE.put(moduleDetails.getFullQualifiedName(), moduleDetails);</span>
+            }
+            else {
+                try {
+<span class="fc" id="L220">                    XmlMetaWriter.write(moduleDetails);</span>
+                }
+<span class="nc" id="L222">                catch (TransformerException | ParserConfigurationException ex) {</span>
+<span class="nc" id="L223">                    throw new IllegalStateException(&quot;Failed to write metadata into XML file for &quot;</span>
+<span class="nc" id="L224">                            + &quot;module: &quot; + getModuleSimpleName(), ex);</span>
+<span class="fc" id="L225">                }</span>
+            }
+        }
+<span class="fc" id="L228">    }</span>
+
+    /**
+     * Method containing the core logic of scraping. This keeps track and decides which phase of
+     * scraping we are in, and accordingly call other subroutines.
+     *
+     * @param ast javadoc ast
+     */
+    public void scrapeContent(DetailNode ast) {
+<span class="fc bfc" id="L237" title="All 2 branches covered.">        if (ast.getType() == JavadocTokenTypes.PARAGRAPH) {</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">            if (isParentText(ast)) {</span>
+<span class="fc" id="L239">                parentSectionStartIdx = getParentIndexOf(ast);</span>
+<span class="fc" id="L240">                moduleDetails.setParent(getParentText(ast));</span>
+            }
+<span class="fc bfc" id="L242" title="All 2 branches covered.">            else if (isViolationMessagesText(ast)) {</span>
+<span class="fc" id="L243">                scrapingViolationMessageList = true;</span>
+            }
+<span class="fc bfc" id="L245" title="All 2 branches covered.">            else if (exampleSectionStartIdx == -1</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">                    &amp;&amp; isExamplesText(ast)) {</span>
+<span class="fc" id="L247">                exampleSectionStartIdx = getParentIndexOf(ast);</span>
+            }
+        }
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        else if (ast.getType() == JavadocTokenTypes.LI) {</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">            if (isPropertyList(ast)) {</span>
+<span class="fc bfc" id="L252" title="All 2 branches covered.">                if (propertySectionStartIdx == -1) {</span>
+<span class="fc" id="L253">                    propertySectionStartIdx = getParentIndexOf(ast);</span>
+                }
+<span class="fc" id="L255">                moduleDetails.addToProperties(createProperties(ast));</span>
+            }
+<span class="fc bfc" id="L257" title="All 2 branches covered.">            else if (scrapingViolationMessageList) {</span>
+<span class="fc" id="L258">                moduleDetails.addToViolationMessages(getViolationMessages(ast));</span>
+            }
+        }
+<span class="fc" id="L261">    }</span>
+
+    /**
+     * Create the modulePropertyDetails content.
+     *
+     * @param nodeLi list item javadoc node
+     * @return modulePropertyDetail object for the corresponding property
+     */
+    private static ModulePropertyDetails createProperties(DetailNode nodeLi) {
+<span class="fc" id="L270">        final ModulePropertyDetails modulePropertyDetails = new ModulePropertyDetails();</span>
+
+<span class="fc" id="L272">        final Optional&lt;DetailNode&gt; propertyNameNode = getFirstChildOfType(nodeLi,</span>
+                JavadocTokenTypes.JAVADOC_INLINE_TAG, 0);
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (propertyNameNode.isPresent()) {</span>
+<span class="fc" id="L275">            final DetailNode propertyNameTag = propertyNameNode.get();</span>
+<span class="fc" id="L276">            final String propertyName = getTextFromTag(propertyNameTag);</span>
+
+<span class="fc" id="L278">            final DetailNode propertyType = getFirstChildOfMatchingText(nodeLi, TYPE_TAG)</span>
+<span class="fc" id="L279">                .orElseThrow(() -&gt; {</span>
+<span class="fc" id="L280">                    return new MetadataGenerationException(String.format(</span>
+                        Locale.ROOT, PROP_TYPE_MISSING, propertyName)
+                    );
+                });
+<span class="fc" id="L284">            final String propertyDesc = DESC_CLEAN.matcher(</span>
+<span class="fc" id="L285">                    constructSubTreeText(nodeLi, propertyNameTag.getIndex() + 1,</span>
+<span class="fc" id="L286">                            propertyType.getIndex() - 1))</span>
+<span class="fc" id="L287">                    .replaceAll(Matcher.quoteReplacement(&quot;&quot;));</span>
+
+<span class="fc" id="L289">            modulePropertyDetails.setDescription(propertyDesc.trim());</span>
+<span class="fc" id="L290">            modulePropertyDetails.setName(propertyName);</span>
+<span class="fc" id="L291">            modulePropertyDetails.setType(getTagTextFromProperty(nodeLi, propertyType));</span>
+
+<span class="fc" id="L293">            final Optional&lt;DetailNode&gt; validationTypeNodeOpt = getFirstChildOfMatchingText(nodeLi,</span>
+                VALIDATION_TYPE_TAG);
+<span class="fc bfc" id="L295" title="All 2 branches covered.">            if (validationTypeNodeOpt.isPresent()) {</span>
+<span class="fc" id="L296">                final DetailNode validationTypeNode = validationTypeNodeOpt.get();</span>
+<span class="fc" id="L297">                modulePropertyDetails.setValidationType(getTagTextFromProperty(nodeLi,</span>
+                    validationTypeNode));
+            }
+
+<span class="fc" id="L301">            final String defaultValue = getFirstChildOfMatchingText(nodeLi, DEFAULT_VALUE_TAG)</span>
+<span class="fc" id="L302">                .map(defaultValueNode -&gt; getPropertyDefaultText(nodeLi, defaultValueNode))</span>
+<span class="fc" id="L303">                .orElseThrow(() -&gt; {</span>
+<span class="fc" id="L304">                    return new MetadataGenerationException(String.format(</span>
+                        Locale.ROOT, PROP_DEFAULT_VALUE_MISSING, propertyName)
+                    );
+                });
+<span class="fc bfc" id="L308" title="All 2 branches covered.">            if (!PROPERTIES_TO_NOT_WRITE.contains(defaultValue)) {</span>
+<span class="fc" id="L309">                modulePropertyDetails.setDefaultValue(defaultValue);</span>
+            }
+        }
+<span class="fc" id="L312">        return modulePropertyDetails;</span>
+    }
+
+    /**
+     * Get tag text from property data.
+     *
+     * @param nodeLi javadoc li item node
+     * @param propertyMeta property javadoc node
+     * @return property metadata text
+     */
+    private static String getTagTextFromProperty(DetailNode nodeLi, DetailNode propertyMeta) {
+<span class="fc" id="L323">        final Optional&lt;DetailNode&gt; tagNodeOpt = getFirstChildOfType(nodeLi,</span>
+<span class="fc" id="L324">                JavadocTokenTypes.JAVADOC_INLINE_TAG, propertyMeta.getIndex() + 1);</span>
+<span class="fc" id="L325">        DetailNode tagNode = null;</span>
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">        if (tagNodeOpt.isPresent()) {</span>
+<span class="fc" id="L327">            tagNode = tagNodeOpt.get();</span>
+        }
+<span class="fc" id="L329">        return getTextFromTag(tagNode);</span>
+    }
+
+    /**
+     * Clean up the default token text by removing hyperlinks, and only keeping token type text.
+     *
+     * @param initialText unclean text
+     * @return clean text
+     */
+    private static String cleanDefaultTokensText(String initialText) {
+<span class="fc" id="L339">        final Set&lt;String&gt; tokens = new LinkedHashSet&lt;&gt;();</span>
+<span class="fc" id="L340">        final Matcher matcher = TOKEN_TEXT_PATTERN.matcher(initialText);</span>
+<span class="fc bfc" id="L341" title="All 2 branches covered.">        while (matcher.find()) {</span>
+<span class="fc" id="L342">            tokens.add(matcher.group(0));</span>
+        }
+<span class="fc" id="L344">        return String.join(&quot;,&quot;, tokens);</span>
+    }
+
+    /**
+     * Performs a DFS of the subtree with a node as the root and constructs the text of that
+     * tree, ignoring JavadocToken texts.
+     *
+     * @param node root node of subtree
+     * @param childLeftLimit the left index of root children from where to scan
+     * @param childRightLimit the right index of root children till where to scan
+     * @return constructed text of subtree
+     */
+    private static String constructSubTreeText(DetailNode node, int childLeftLimit,
+                                               int childRightLimit) {
+<span class="fc" id="L358">        final StringBuilder result = new StringBuilder(1024);</span>
+<span class="fc" id="L359">        DetailNode detailNode = node;</span>
+
+<span class="fc" id="L361">        final Deque&lt;DetailNode&gt; stack = new ArrayDeque&lt;&gt;();</span>
+<span class="fc" id="L362">        stack.addFirst(detailNode);</span>
+<span class="fc" id="L363">        final Set&lt;DetailNode&gt; visited = new HashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">        while (!stack.isEmpty()) {</span>
+<span class="fc" id="L365">            detailNode = stack.getFirst();</span>
+<span class="fc" id="L366">            stack.removeFirst();</span>
+
+<span class="pc bpc" id="L368" title="1 of 2 branches missed.">            if (!visited.contains(detailNode)) {</span>
+<span class="fc" id="L369">                final String childText = detailNode.getText();</span>
+<span class="fc bfc" id="L370" title="All 2 branches covered.">                if (detailNode.getType() != JavadocTokenTypes.LEADING_ASTERISK</span>
+<span class="fc bfc" id="L371" title="All 2 branches covered.">                        &amp;&amp; !TOKEN_TEXT_PATTERN.matcher(childText).matches()) {</span>
+<span class="fc" id="L372">                    result.insert(0, detailNode.getText());</span>
+                }
+<span class="fc" id="L374">                visited.add(detailNode);</span>
+            }
+
+<span class="fc bfc" id="L377" title="All 2 branches covered.">            for (DetailNode child : detailNode.getChildren()) {</span>
+<span class="fc bfc" id="L378" title="All 2 branches covered.">                if (child.getParent().equals(node)</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">                        &amp;&amp; (child.getIndex() &lt; childLeftLimit</span>
+<span class="fc bfc" id="L380" title="All 2 branches covered.">                        || child.getIndex() &gt; childRightLimit)) {</span>
+<span class="fc" id="L381">                    continue;</span>
+                }
+<span class="pc bpc" id="L383" title="1 of 2 branches missed.">                if (!visited.contains(child)) {</span>
+<span class="fc" id="L384">                    stack.addFirst(child);</span>
+                }
+            }
+        }
+<span class="fc" id="L388">        return result.toString().trim();</span>
+    }
+
+    /**
+     * Create the description text with starting index as 0 and ending index would be the first
+     * valid non zero index amongst in the order of {@code propertySectionStartIdx},
+     * {@code exampleSectionStartIdx} and {@code parentSectionStartIdx}.
+     *
+     * @return description text
+     */
+    private String getDescriptionText() {
+        final int descriptionEndIdx;
+<span class="fc bfc" id="L400" title="All 2 branches covered.">        if (propertySectionStartIdx &gt; -1) {</span>
+<span class="fc" id="L401">            descriptionEndIdx = propertySectionStartIdx;</span>
+        }
+<span class="fc bfc" id="L403" title="All 2 branches covered.">        else if (exampleSectionStartIdx &gt; -1) {</span>
+<span class="fc" id="L404">            descriptionEndIdx = exampleSectionStartIdx;</span>
+        }
+        else {
+<span class="fc" id="L407">            descriptionEndIdx = parentSectionStartIdx;</span>
+        }
+<span class="fc" id="L409">        return constructSubTreeText(rootNode, 0, descriptionEndIdx - 1);</span>
+    }
+
+    /**
+     * Create property default text, which is either normal property value or list of tokens.
+     *
+     * @param nodeLi list item javadoc node
+     * @param defaultValueNode default value node
+     * @return default property text
+     */
+    private static String getPropertyDefaultText(DetailNode nodeLi, DetailNode defaultValueNode) {
+<span class="fc" id="L420">        final Optional&lt;DetailNode&gt; propertyDefaultValueTag = getFirstChildOfType(nodeLi,</span>
+<span class="fc" id="L421">                JavadocTokenTypes.JAVADOC_INLINE_TAG, defaultValueNode.getIndex() + 1);</span>
+        final String result;
+<span class="fc bfc" id="L423" title="All 2 branches covered.">        if (propertyDefaultValueTag.isPresent()) {</span>
+<span class="fc" id="L424">            result = getTextFromTag(propertyDefaultValueTag.get());</span>
+        }
+        else {
+<span class="fc" id="L427">            final String tokenText = constructSubTreeText(nodeLi,</span>
+<span class="fc" id="L428">                    defaultValueNode.getIndex(), nodeLi.getChildren().length);</span>
+<span class="fc" id="L429">            result = cleanDefaultTokensText(tokenText);</span>
+        }
+<span class="fc" id="L431">        return result;</span>
+    }
+
+    /**
+     * Get the violation message text for a specific key from the list item.
+     *
+     * @param nodeLi list item javadoc node
+     * @return violation message key text
+     */
+    private static String getViolationMessages(DetailNode nodeLi) {
+<span class="fc" id="L441">        final Optional&lt;DetailNode&gt; resultNode = getFirstChildOfType(nodeLi,</span>
+                JavadocTokenTypes.JAVADOC_INLINE_TAG, 0);
+<span class="fc" id="L443">        return resultNode.map(JavadocMetadataScraper::getTextFromTag).orElse(&quot;&quot;);</span>
+    }
+
+    /**
+     * Get text from {@code JavadocTokenTypes.JAVADOC_INLINE_TAG}.
+     *
+     * @param nodeTag target javadoc tag
+     * @return text contained by the tag
+     */
+    private static String getTextFromTag(DetailNode nodeTag) {
+<span class="fc" id="L453">        return Optional.ofNullable(nodeTag).map(JavadocMetadataScraper::getText).orElse(&quot;&quot;);</span>
+    }
+
+    /**
+     * Returns the first child node which matches the provided {@code TokenType} and has the
+     * children index after the offset value.
+     *
+     * @param node parent node
+     * @param tokenType token type to match
+     * @param offset children array index offset
+     * @return the first child satisfying the conditions
+     */
+    private static Optional&lt;DetailNode&gt; getFirstChildOfType(DetailNode node, int tokenType,
+                                                            int offset) {
+<span class="fc" id="L467">        return Arrays.stream(node.getChildren())</span>
+<span class="fc bfc" id="L468" title="All 4 branches covered.">                .filter(child -&gt; child.getIndex() &gt;= offset &amp;&amp; child.getType() == tokenType)</span>
+<span class="fc" id="L469">                .findFirst();</span>
+    }
+
+    /**
+     * Get joined text from all text children nodes.
+     *
+     * @param parentNode parent node
+     * @return the joined text of node
+     */
+    private static String getText(DetailNode parentNode) {
+<span class="fc" id="L479">        return Arrays.stream(parentNode.getChildren())</span>
+<span class="fc bfc" id="L480" title="All 2 branches covered.">                .filter(child -&gt; child.getType() == JavadocTokenTypes.TEXT)</span>
+<span class="fc" id="L481">                .map(node -&gt; QUOTE_PATTERN.matcher(node.getText().trim()).replaceAll(&quot;&quot;))</span>
+<span class="fc" id="L482">                .collect(Collectors.joining(&quot; &quot;));</span>
+    }
+
+    /**
+     * Get first child of parent node matching the provided pattern.
+     *
+     * @param node parent node
+     * @param pattern pattern to match against
+     * @return the first child node matching the condition
+     */
+    private static Optional&lt;DetailNode&gt; getFirstChildOfMatchingText(DetailNode node,
+                                                                    Pattern pattern) {
+<span class="fc" id="L494">        return Arrays.stream(node.getChildren())</span>
+<span class="fc" id="L495">                .filter(child -&gt; pattern.matcher(child.getText()).matches())</span>
+<span class="fc" id="L496">                .findFirst();</span>
+    }
+
+    /**
+     * Returns parent node, removing modifier/annotation nodes.
+     *
+     * @param commentBlock child node.
+     * @return parent node.
+     */
+    private static DetailAST getParent(DetailAST commentBlock) {
+<span class="fc" id="L506">        final DetailAST parentNode = commentBlock.getParent();</span>
+<span class="fc" id="L507">        DetailAST result = parentNode;</span>
+<span class="fc bfc" id="L508" title="All 2 branches covered.">        if (result.getType() == TokenTypes.ANNOTATION) {</span>
+<span class="fc" id="L509">            result = parentNode.getParent().getParent();</span>
+        }
+<span class="fc bfc" id="L511" title="All 2 branches covered.">        else if (result.getType() == TokenTypes.MODIFIERS) {</span>
+<span class="fc" id="L512">            result = parentNode.getParent();</span>
+        }
+<span class="fc" id="L514">        return result;</span>
+    }
+
+    /**
+     * Traverse parents until we reach the root node (@code{JavadocTokenTypes.JAVADOC})
+     * child and return its index.
+     *
+     * @param node subtree child node
+     * @return root node child index
+     */
+    private static int getParentIndexOf(DetailNode node) {
+<span class="fc" id="L525">        DetailNode currNode = node;</span>
+<span class="fc bfc" id="L526" title="All 2 branches covered.">        while (currNode.getParent().getIndex() != -1) {</span>
+<span class="fc" id="L527">            currNode = currNode.getParent();</span>
+        }
+<span class="fc" id="L529">        return currNode.getIndex();</span>
+    }
+
+    /**
+     * Get module parent text from paragraph javadoc node.
+     *
+     * @param nodeParagraph paragraph javadoc node
+     * @return parent text
+     */
+    private static String getParentText(DetailNode nodeParagraph) {
+<span class="fc" id="L539">        return getFirstChildOfType(nodeParagraph, JavadocTokenTypes.JAVADOC_INLINE_TAG, 0)</span>
+<span class="fc" id="L540">                .map(JavadocMetadataScraper::getTextFromTag)</span>
+<span class="fc" id="L541">                .orElse(null);</span>
+    }
+
+    /**
+     * Get module type(check/filter/filefilter) based on file name.
+     *
+     * @return module type
+     */
+    private ModuleType getModuleType() {
+<span class="fc" id="L550">        final String simpleModuleName = getModuleSimpleName();</span>
+        final ModuleType result;
+<span class="fc bfc" id="L552" title="All 2 branches covered.">        if (simpleModuleName.endsWith(&quot;FileFilter&quot;)) {</span>
+<span class="fc" id="L553">            result = ModuleType.FILEFILTER;</span>
+        }
+<span class="fc bfc" id="L555" title="All 2 branches covered.">        else if (simpleModuleName.endsWith(&quot;Filter&quot;)) {</span>
+<span class="fc" id="L556">            result = ModuleType.FILTER;</span>
+        }
+        else {
+<span class="fc" id="L559">            result = ModuleType.CHECK;</span>
+        }
+<span class="fc" id="L561">        return result;</span>
+    }
+
+    /**
+     * Extract simple file name from the whole file path name.
+     *
+     * @return simple module name
+     */
+    private String getModuleSimpleName() {
+<span class="fc" id="L570">        final String fullFileName = getFileContents().getFileName();</span>
+<span class="fc" id="L571">        final String[] pathTokens = FILE_SEPARATOR_PATTERN.split(fullFileName);</span>
+<span class="fc" id="L572">        final String fileName = pathTokens[pathTokens.length - 1];</span>
+<span class="fc" id="L573">        return fileName.substring(0, fileName.length() - JAVA_FILE_EXTENSION.length());</span>
+    }
+
+    /**
+     * Retrieve package name of module from the absolute file path.
+     *
+     * @param filePath absolute file path
+     * @return package name
+     */
+    private static String getPackageName(String filePath) {
+<span class="fc" id="L583">        final Deque&lt;String&gt; result = new ArrayDeque&lt;&gt;();</span>
+<span class="fc" id="L584">        final String[] filePathTokens = FILE_SEPARATOR_PATTERN.split(filePath);</span>
+<span class="pc bpc" id="L585" title="1 of 2 branches missed.">        for (int i = filePathTokens.length - 1; i &gt;= 0; i--) {</span>
+<span class="fc bfc" id="L586" title="All 4 branches covered.">            if (&quot;java&quot;.equals(filePathTokens[i]) || &quot;resources&quot;.equals(filePathTokens[i])) {</span>
+<span class="fc" id="L587">                break;</span>
+            }
+<span class="fc" id="L589">            result.addFirst(filePathTokens[i]);</span>
+        }
+<span class="fc" id="L591">        final String fileName = result.removeLast();</span>
+<span class="fc" id="L592">        result.addLast(fileName.substring(0, fileName.length() - JAVA_FILE_EXTENSION.length()));</span>
+<span class="fc" id="L593">        return String.join(&quot;.&quot;, result);</span>
+    }
+
+    /**
+     * Getter method for {@code moduleDetailsStore}.
+     *
+     * @return map containing module details of supplied checks.
+     */
+    public static Map&lt;String, ModuleDetails&gt; getModuleDetailsStore() {
+<span class="fc" id="L602">        return Collections.unmodifiableMap(MODULE_DETAILS_STORE);</span>
+    }
+
+    /**
+     * Check if the current javadoc block comment AST corresponds to the top-level class as we
+     * only want to scrape top-level class javadoc.
+     *
+     * @return true if the current AST corresponds to top level class
+     */
+    public boolean isTopLevelClassJavadoc() {
+<span class="fc" id="L612">        final DetailAST parent = getParent(getBlockCommentAst());</span>
+<span class="fc" id="L613">        final Optional&lt;DetailAST&gt; className = TokenUtil</span>
+<span class="fc" id="L614">                .findFirstTokenByPredicate(parent, child -&gt; {</span>
+<span class="fc bfc" id="L615" title="All 2 branches covered.">                    return parent.getType() == TokenTypes.CLASS_DEF</span>
+<span class="fc bfc" id="L616" title="All 2 branches covered.">                            &amp;&amp; child.getType() == TokenTypes.IDENT;</span>
+                });
+<span class="fc bfc" id="L618" title="All 2 branches covered.">        return className.isPresent()</span>
+<span class="fc bfc" id="L619" title="All 2 branches covered.">                &amp;&amp; getModuleSimpleName().equals(className.get().getText());</span>
+    }
+
+    /**
+     * Checks whether the paragraph node corresponds to the example section.
+     *
+     * @param ast javadoc paragraph node
+     * @return true if the section matches the example section marker
+     */
+    private static boolean isExamplesText(DetailNode ast) {
+<span class="fc" id="L629">        return isChildNodeTextMatches(ast, EXAMPLES_TAG);</span>
+    }
+
+    /**
+     * Checks whether the list item node is part of a property list.
+     *
+     * @param nodeLi {@code JavadocTokenType.LI} node
+     * @return true if the node is part of a property list
+     */
+    private static boolean isPropertyList(DetailNode nodeLi) {
+<span class="fc" id="L639">        return isChildNodeTextMatches(nodeLi, PROPERTY_TAG);</span>
+    }
+
+    /**
+     * Checks whether the {@code JavadocTokenType.PARAGRAPH} node is referring to the violation
+     * message keys javadoc segment.
+     *
+     * @param nodeParagraph paragraph javadoc node
+     * @return true if paragraph node contains the violation message keys text
+     */
+    private static boolean isViolationMessagesText(DetailNode nodeParagraph) {
+<span class="fc" id="L650">        return isChildNodeTextMatches(nodeParagraph, VIOLATION_MESSAGES_TAG);</span>
+    }
+
+    /**
+     * Checks whether the {@code JavadocTokenType.PARAGRAPH} node is referring to the parent
+     * javadoc segment.
+     *
+     * @param nodeParagraph paragraph javadoc node
+     * @return true if paragraph node contains the parent text
+     */
+    private static boolean isParentText(DetailNode nodeParagraph) {
+<span class="fc" id="L661">        return isChildNodeTextMatches(nodeParagraph, PARENT_TAG);</span>
+    }
+
+    /**
+     * Checks whether the first child {@code JavadocTokenType.TEXT} node matches given pattern.
+     *
+     * @param ast parent javadoc node
+     * @param pattern pattern to match
+     * @return true if one of child text nodes matches pattern
+     */
+    private static boolean isChildNodeTextMatches(DetailNode ast, Pattern pattern) {
+<span class="fc" id="L672">        return getFirstChildOfType(ast, JavadocTokenTypes.TEXT, 0)</span>
+<span class="fc" id="L673">                .map(DetailNode::getText)</span>
+<span class="fc" id="L674">                .map(pattern::matcher)</span>
+<span class="fc" id="L675">                .map(Matcher::matches)</span>
+<span class="fc" id="L676">                .orElse(false);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>
